@@ -3,6 +3,7 @@ from rclpy.node import Node
 
 from nav2_msgs.msg import BehaviorTreeLog
 from geometry_msgs.msg import PoseStamped
+from nav_msgs.msg import OccupancyGrid
 
 
 class WaypointCycler(Node):
@@ -18,6 +19,10 @@ class WaypointCycler(Node):
             10
         )
 
+        self.create_subscription(OccupancyGrid, '/map', self.map_callback, 10)
+        self.map = None
+        self.nav_idle = False
+
         # Create a publisher for the goal_pose topic
         self.publisher_ = self.create_publisher(
             PoseStamped,
@@ -25,51 +30,41 @@ class WaypointCycler(Node):
             10
         )
 
-        # Keep track of the number of waypoints sent
-        self.waypoint_counter = 0
-
-        # First waypoint
-        p0 = PoseStamped()
-        p0.header.frame_id = 'map'
-        p0.pose.position.x = 1.7
-        p0.pose.position.y = -0.5
-        p0.pose.orientation.w = 1.0
-
-        # Second waypoint
-        p1 = PoseStamped()
-        p1.header.frame_id = 'map'
-        p1.pose.position.x = -0.6
-        p1.pose.position.y = 1.8
-        p1.pose.orientation.w = 1.0
-
-        # Store the waypoints
-        self.waypoints = [p0, p1]
-
     def bt_log_callback(self, msg: BehaviorTreeLog):
-        # Check the current state of the behaviour tree
-        for event in msg.event_log:
-            if event.node_name == 'NavigateRecovery' and event.current_status == 'IDLE':
-                self.send_waypoint()
+        for event in reversed(msg.event_log):
+            if event.node_name == 'NavigateRecovery':
+                idle = event.current_status == 'IDLE'
+
+                if idle and not self.nav_idle:
+                    self.send_waypoint()
+
+                self.nav_idle = idle
+                return
 
     def send_waypoint(self):
-        # Keep track of the number of waypoints sent
-        self.waypoint_counter += 1
+        if self.map is None:
+            return
 
-        # Alternate between the two waypoints
-        if self.waypoint_counter % 2:
-            waypoint = self.waypoints[1]
-        else:
-            waypoint = self.waypoints[0]
+        w = self.map.info.width
+        data = self.map.data
 
-        # Publish the waypoint
-        self.publisher_.publish(waypoint)
+        for i in range(w, len(data)-w):
+            if data[i] == 0 and -1 in [data[i-1], data[i+1], data[i-w], data[i+w]]:
+                x, y = i % w, i // w
 
-        # Print information to the terminal
-        self.get_logger().info(
-            f'Sending waypoint {self.waypoint_counter}: '
-            f'x={waypoint.pose.position.x}, '
-            f'y={waypoint.pose.position.y}'
-        )
+                goal = PoseStamped()
+                goal.header.frame_id = 'map'
+                goal.pose.position.x = self.map.info.origin.position.x + x*self.map.info.resolution
+                goal.pose.position.y = self.map.info.origin.position.y + y*self.map.info.resolution
+                goal.pose.orientation.w = 1.0
+
+                self.publisher_.publish(goal)
+                self.get_logger().info(f'Frontier: {goal.pose.position.x:.2f}, {goal.pose.position.y:.2f}')
+                return
+
+    def map_callback(self, msg):
+        self.map = msg
+        print("MAP")
 
 def main(args=None):
     rclpy.init(args=args)
