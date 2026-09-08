@@ -203,7 +203,6 @@ def sorted_frontiers(map_msg, clusters, robot_position):
 
     return sorted_frontier_cells
 
-
 ## Find a stand-off goal in known free space near a frontier
 # Adapted from the waypoint cycler stand-off logic
 def offset_frontier_goal(map_msg, frontier, offset):
@@ -245,28 +244,30 @@ def offset_frontier_goal(map_msg, frontier, offset):
     unknown_row_direction /= direction_length
     unknown_column_direction /= direction_length
 
-    # Move away from the unknown space and back into known space
-    goal_row = round(row - unknown_row_direction * standoff_cells)
+    # Move away from the unknown space and back into known space.
+    # Start at the requested stand-off distance and move closer
+    # to the frontier until a free goal cell is found.
+    for distance in range(standoff_cells, 0, -1):
 
-    goal_column = round(column - unknown_column_direction * standoff_cells)
+        goal_row = round(row - unknown_row_direction * distance)
 
-    # Make sure the goal remains inside the map
-    if get_cell(map_msg, goal_row, goal_column) == -100:
-        return None
+        goal_column = round(column - unknown_column_direction * distance)
 
-    # Adapted from waypoint cycler:
-    # the stand-off goal must be known free space
-    if get_cell(map_msg, goal_row, goal_column) != 0:
-        return None
+        # Ignore positions outside the current map
+        if get_cell(map_msg, goal_row, goal_column) == -100:
+            continue
 
-    # Convert the valid stand-off cell to world coordinates for Nav2
-    goal_position = grid_to_world(map_msg, goal_row, goal_column)
+        if get_cell(map_msg, goal_row, goal_column) != 0:
+            continue
 
-    return goal_position
+        # A valid free stand-off cell was found
+        return grid_to_world(map_msg, goal_row, goal_column)
 
+    # No free stand-off position could be found
+    return None
 
 ## Find the closest frontier that produces a valid stand-off goal
-def choose_frontier_goal(map_msg, clusters, robot_position, offset):
+def choose_frontier_goal(map_msg, clusters, robot_position, offset, failed_goals):
     frontiers = sorted_frontiers(map_msg, clusters, robot_position)
 
     # Try the closest frontier first, then continue until
@@ -274,7 +275,31 @@ def choose_frontier_goal(map_msg, clusters, robot_position, offset):
     for frontier in frontiers:
         goal = offset_frontier_goal(map_msg, frontier, offset)
 
-        if goal is not None:
-            return frontier, goal
+        if goal is None:
+            continue
 
-    return None, None   
+        # Check whether the goal is close to a previously failed goal
+        failed = False
+
+        for failed_goal in failed_goals:
+            square_distance = (
+                (goal[0] - failed_goal[0]) ** 2
+                + (goal[1] - failed_goal[1]) ** 2
+            )
+
+            if square_distance < 0.5 ** 2:
+                failed = True
+                break
+
+        if failed:
+            continue
+
+        # Do not select goals that the robot is already effectively at
+        square_distance = ((goal[0] - robot_position[0]) ** 2 + (goal[1] - robot_position[1]) ** 2)
+
+        if square_distance < 0.5 ** 2:
+            continue
+
+        return frontier, goal
+
+    return None, None  
