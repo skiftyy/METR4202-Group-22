@@ -24,7 +24,7 @@ ros2 launch turtlebot3_gazebo turtlebot3_world.launch.py
 
 export TURTLEBOT3_MODEL=waffle_pi
 
-ros2 launch turtlebot3_navigation2 navigation2.launch.py use_sim_time:=True slam:True
+ros2 launch turtlebot3_navigation2 navigation2.launch.py use_sim_time:=True slam:=True
 
 
 colcon build --symlink-install --packages-select waypoint_commander
