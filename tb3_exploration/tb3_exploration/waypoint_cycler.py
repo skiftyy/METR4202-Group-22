@@ -31,6 +31,7 @@ class WaypointCycler(Node):
 
         self.attempted_frontiers = []
         self.frontier_skip_radius = 0.6
+        self.frontier_standoff = 0.4
         self.current_goal = None
 
         # Create a publisher for the goal_pose topic
