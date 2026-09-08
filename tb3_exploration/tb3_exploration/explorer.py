@@ -1,137 +1,97 @@
 import rclpy
 from rclpy.node import Node
-
-from nav2_msgs.msg import BehaviorTreeLog
-from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import OccupancyGrid
 
+from .frontier_helpers import (find_frontiers, group_frontiers, filter_clusters, choose_frontier_goal)
+from tf2_ros import Buffer, TransformListener
 
-class WaypointCycler(Node):
+class Explorer(Node):
 
     def __init__(self):
-        super().__init__('waypoint_cycler')
+        super().__init__('explorer')
 
-        # Create a subscriber to the behavior_tree_log topic
-        self.subscription = self.create_subscription(
-            BehaviorTreeLog,
-            'behavior_tree_log',
-            self.bt_log_callback,
+        # Subscribe to the SLAM occupancy grid
+        self.map_subscription = self.create_subscription(
+            OccupancyGrid,
+            '/map',
+            self.map_callback,
             10
         )
 
-        self.create_subscription(OccupancyGrid, '/map', self.map_callback, 10)
         self.map = None
-        self.nav_idle = False
-        
-        self.attempted_frontiers = []
-        self.frontier_skip_radius = 0.4
-        self.current_goal = None
 
-        # Create a publisher for the goal_pose topic
-        self.publisher_ = self.create_publisher(
-            PoseStamped,
-            'goal_pose',
-            10
-        )
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
 
-    def bt_log_callback(self, msg: BehaviorTreeLog):
-        for event in reversed(msg.event_log):
-            if event.node_name == 'NavigateRecovery':
-                idle = event.current_status == 'IDLE'
-
-                if idle and not self.nav_idle:
-                    
-                     if self.current_goal is not None:
-                        self.attempted_frontiers.append(self.current_goal)
-                        self.current_goal = None
-                         
-                    self.send_waypoint()
-
-                self.nav_idle = idle
-                return
-                
-    def already_attempted(self, x, y):
-
-    for old_x, old_y in self.attempted_frontiers:
-
-        distance_squared = (x - old_x)**2 + (y - old_y)**2
-
-        if distance_squared < self.frontier_skip_radius**2:
-            return True
-
-    return False
-
-    def send_waypoint(self):
-
-    if self.map is None:
-        return
-
-    w = self.map.info.width
-    data = self.map.data
-
-    for i in range(w, len(data) - w):
-
-        # Free cell next to unknown cell
-        if data[i] == 0 and -1 in [
-            data[i-1],
-            data[i+1],
-            data[i-w],
-            data[i+w]
-        ]:
-
-            x = i % w
-            y = i // w
-
-            goal_x = (
-                self.map.info.origin.position.x
-                + x * self.map.info.resolution
+    def get_robot_position(self):
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                'map',
+                'base_link',
+                rclpy.time.Time()
             )
 
-            goal_y = (
-                self.map.info.origin.position.y
-                + y * self.map.info.resolution
-            )
+            x = transform.transform.translation.x
+            y = transform.transform.translation.y
 
-            # Ignore frontiers we've already tried
-            if self.already_attempted(goal_x, goal_y):
-                continue
+            return (x, y)
 
-            goal = PoseStamped()
-            goal.header.frame_id = 'map'
-            goal.header.stamp = self.get_clock().now().to_msg()
+        except Exception as e:
+            self.get_logger().warn(f'Could not get robot position: {e}')
+            return None
 
-            goal.pose.position.x = goal_x
-            goal.pose.position.y = goal_y
-            goal.pose.orientation.w = 1.0
-
-            # Remember which goal is currently being attempted
-            self.current_goal = (goal_x, goal_y)
-
-            self.publisher_.publish(goal)
-
-            self.get_logger().info(
-                f'Going to frontier: {goal_x:.2f}, {goal_y:.2f}'
-            )
-
-            return
-
-    self.get_logger().warn('No untried frontiers found')
-    
     def map_callback(self, msg):
         self.map = msg
-        print("MAP")
+
+        frontiers = find_frontiers(msg)
+        raw_clusters = group_frontiers(frontiers)
+        clusters = filter_clusters(raw_clusters, 5)
+
+        cluster_sizes = []
+
+        for cluster in clusters:
+            cluster_sizes.append(len(cluster))
+
+        self.get_logger().info(
+            f'Frontier cells: {len(frontiers)}, '
+            f'clusters: {len(clusters)}, '
+            f'cluster sizes: {cluster_sizes}'
+        )
+
+        robot_position = self.get_robot_position()
+
+        if robot_position is not None:
+            self.get_logger().info(
+                f'Robot position: '
+                f'x={robot_position[0]:.2f}, '
+                f'y={robot_position[1]:.2f}'
+            )
+
+            frontier, goal = choose_frontier_goal(
+                msg,
+                clusters,
+                robot_position,
+                0.4
+            )
+
+            if goal is not None:
+                self.get_logger().info(
+                    f'Chosen frontier cell: {frontier}, '
+                    f'goal: x={goal[0]:.2f}, y={goal[1]:.2f}'
+                )
+
+            else:
+                self.get_logger().warn(
+                    'No valid frontier goal found'
+                )
 
 def main(args=None):
     rclpy.init(args=args)
 
-    # Create a new WaypointCycler node
-    waypoint_cmder = WaypointCycler()
+    explorer = Explorer()
+    rclpy.spin(explorer)
 
-    # Execute the node
-    rclpy.spin(waypoint_cmder)
-
-    # Shutdown ROS
-    waypoint_cmder.destroy_node()
+    explorer.destroy_node()
     rclpy.shutdown()
 
 

@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
 		'waypoint_cycler = tb3_exploration.waypoint_cycler:main',
+        'explorer = tb3_exploration.explorer:main',
         ],
     },
 )
