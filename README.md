@@ -32,6 +32,10 @@ ros2 launch turtlebot3_navigation2 navigation2.launch.py use_sim_time:=True slam
 
 _Terminal 3:_
 
-colcon build --symlink-install --packages-select waypoint_commander
+cd /path/to/your/repo
 
-ros2 run waypoint_commander waypoint_cycler
+colcon build --symlink-install --packages-select tb3_exploration
+
+source install/setup.bash
+
+ros2 run tb3_exploration waypoint_cycler
