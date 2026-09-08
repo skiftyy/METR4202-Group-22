@@ -41,7 +41,7 @@ class WaypointCycler(Node):
 
                 if idle and not self.nav_idle:
                     
-                     if self.current_goal is not None:
+                    if self.current_goal is not None:
                         self.attempted_frontiers.append(self.current_goal)
                         self.current_goal = None
                          
